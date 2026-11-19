@@ -44,7 +44,7 @@ Endpoints
             {
                 "session-id": <string>,		// session ID
                 "start-time": <string>,		// start timestamp in RFC-3339 format
-                "policy": <string>,		// "strict" or "permissive"
+                "policy": <string>,	// "strict", "permissive", or "passthrough"
                 "age": <int>,			// seconds since session start
                 "timeout": <int>		// session TTL in seconds
             },
@@ -62,6 +62,19 @@ Endpoints
   token to be used in client requests. Permissive sessions are only allowed if the fetch
   service is started in permissive mode.
 
+  Select ``"policy": "passthrough"`` to forward traffic without running request or
+  artifact inspectors. The operator must first start the service with
+  ``--passthrough-mode`` or, for the snap, set ``passthrough=true`` and restart the
+  service. With the same operator opt-in, ``fetchctl create-session --passthrough``
+  can also create a passthrough session.
+
+  Passthrough sessions still require proxy authentication, apply destination ACLs
+  and configured session secrets, and intercept HTTPS using the proxy CA. Clients
+  must trust that CA. The service log records authenticated requests with their
+  session ID, client IP, method, and URL (without user information, query, or
+  fragment). Responses are forwarded without saving artifacts, so session reports
+  contain no artifact records for these sessions.
+
 :Authentication:
   Basic authentication is required to access this endpoint.
 
@@ -71,7 +84,7 @@ Endpoints
 
     {
         "timeout": <int>,		// session timeout in seconds
-        "policy": <string>,		// "strict" or "permissive"
+        "policy": <string>,		// "strict", "permissive", or "passthrough"
         "secrets": [<secret>],		// optional list of session secrets
         "inspectors-configuration": <inspectors-conf>	// optional inspectors configuration
     }

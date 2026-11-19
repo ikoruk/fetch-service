@@ -114,7 +114,7 @@ type SessionCredentials struct {
 type CreateSession struct {
 	Rch              chan SessionCredentials         // Handler response channel
 	Timeout          uint64                          // Session timeout in seconds
-	Policy           string                          // Session policy (strict or permissive)
+	Policy           string                          // Session policy (strict, permissive, or passthrough)
 	Secrets          []secrets.Secret                // Secrets for the session
 	InspectorsConfig config.OverrideInspectorsConfig // Session inspectors configuration
 	ClientIP         string                          // The client requesting the session creation

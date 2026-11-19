@@ -688,6 +688,8 @@ func (t *serviceSuite) TestCreateSession(c *C) {
 		{true, "permissive", nil, ""},
 		{false, "permissive", nil, "Invalid session policy"},
 		{false, "strict", nil, ""},
+		{true, "passthrough", nil, ""},
+		{false, "passthrough", nil, "Invalid session policy"},
 		// Cases for secrets
 		// Good secret declaration
 		{true, "permissive", []secrets.Secret{{Type: secrets.BasicAuthType, URL: glob.MustCompile("www.example.com"), BasicCreds: "user:passwd"}}, ""},
@@ -703,12 +705,13 @@ func (t *serviceSuite) TestCreateSession(c *C) {
 		{true, "permissive", []secrets.Secret{{Type: secrets.MacaroonType, URL: glob.MustCompile("www.example.com")}}, secrets.ErrMissingMacaroonCreds.Error()},
 	} {
 		opt := service.Options{
-			ProxyPort:      1337,
-			Spool:          dir,
-			PermissiveMode: tc.permissiveMode,
-			CertPath:       certPath,
-			KeyPath:        keyPath,
-			Config:         confDir,
+			ProxyPort:       1337,
+			Spool:           dir,
+			PermissiveMode:  tc.permissiveMode,
+			PassthroughMode: tc.permissiveMode,
+			CertPath:        certPath,
+			KeyPath:         keyPath,
+			Config:          confDir,
 		}
 		svc, err := service.New(&opt)
 		c.Assert(err, IsNil)
@@ -724,6 +727,7 @@ func (t *serviceSuite) TestCreateSession(c *C) {
 			c.Assert(res.Err, Equals, nil)
 			s := session.GetSession(res.ID)
 			c.Assert(s.Permissive, Equals, tc.policy == "permissive")
+			c.Assert(s.Metadata().Policy, Equals, tc.policy)
 			s.Discard()
 		} else {
 			c.Assert(res.Err, ErrorMatches, tc.errMsg)
@@ -1172,33 +1176,36 @@ func (t *serviceSuite) TestFetchctlCreateSession(c *C) {
 		sid        string
 		token      string
 		timeout    time.Duration
-		permissive bool
+		policy     string
 	}{
-		{true, `{"session-id":"x", "token":"y", "timeout":0, "mode":"strict", "inspectors-configuration":""}`, "x", "y", time.Duration(0), false},
-		{false, `{"session-id":"x", "token":"y", "timeout":60, "mode":"strict", "inspectors-configuration":""}`, "x", "y", time.Duration(1 * time.Minute), false},
-		{true, `{"session-id":"x", "token":"y", "timeout":0, "mode":"permissive", "inspectors-configuration":""}`, "x", "y", time.Duration(0), true},
-		{false, `{"session-id":"x", "token":"y", "timeout":0, "mode":"permissive", "inspectors-configuration":""}`, "x", "y", time.Duration(0), false},
+		{true, `{"session-id":"x", "token":"y", "timeout":0, "mode":"strict", "inspectors-configuration":""}`, "x", "y", time.Duration(0), "strict"},
+		{false, `{"session-id":"x", "token":"y", "timeout":60, "mode":"strict", "inspectors-configuration":""}`, "x", "y", time.Duration(1 * time.Minute), "strict"},
+		{true, `{"session-id":"x", "token":"y", "timeout":0, "mode":"permissive", "inspectors-configuration":""}`, "x", "y", time.Duration(0), "permissive"},
+		{false, `{"session-id":"x", "token":"y", "timeout":0, "mode":"permissive", "inspectors-configuration":""}`, "x", "y", time.Duration(0), "strict"},
+		{true, `{"session-id":"x", "token":"y", "mode":"passthrough"}`, "x", "y", time.Duration(0), "passthrough"},
+		{false, `{"session-id":"x", "token":"y", "mode":"passthrough"}`, "x", "y", time.Duration(0), ""},
 	} {
 		var ss *session.Session
-		restorer = service.MockSessionNewWithID(func(sessionID, token, spool string, timeout time.Duration, permissive bool, sec []secrets.Secret, inspectorsConfig config.OverrideInspectorsConfig) *session.Session {
+		restorer = service.MockSessionNewWithID(func(sessionID, token, spool string, timeout time.Duration, policy string, sec []secrets.Secret, inspectorsConfig config.OverrideInspectorsConfig) *session.Session {
 			c.Check(sessionID, Equals, tc.sid)
 			c.Check(token, Equals, tc.token)
 			c.Check(timeout, Equals, tc.timeout)
-			c.Check(permissive, Equals, tc.permissive)
+			c.Check(policy, Equals, tc.policy)
 
-			ss = session.NewWithID(sessionID, token, spool, timeout, permissive, sec, inspectorsConfig)
+			ss = session.NewWithIDAndPolicy(sessionID, token, spool, timeout, policy, sec, inspectorsConfig)
 			return ss
 		})
 		defer restorer()
 
 		spool := filepath.Join(dir, "spool")
 		opt := service.Options{
-			ProxyPort:      1337,
-			Spool:          spool,
-			CertPath:       certPath,
-			KeyPath:        keyPath,
-			PermissiveMode: tc.globalPerm,
-			Config:         confDir,
+			ProxyPort:       1337,
+			Spool:           spool,
+			CertPath:        certPath,
+			KeyPath:         keyPath,
+			PermissiveMode:  tc.globalPerm,
+			PassthroughMode: tc.globalPerm,
+			Config:          confDir,
 		}
 		svc, err := service.New(&opt)
 		c.Assert(err, IsNil)
@@ -1209,17 +1216,15 @@ func (t *serviceSuite) TestFetchctlCreateSession(c *C) {
 		msg := messages.NewFetchCtl("create-session", "", false, []byte(tc.payload))
 		t.ch <- msg
 		res := <-msg.Rch
-		defer ss.Finish() // nolint:errcheck
-
-		var policy string
-		if tc.permissive {
-			policy = "permissive"
+		if tc.policy == "" {
+			c.Check(ss, IsNil)
+			c.Check(res.Status, Equals, "error")
+			c.Check(res.Message, Equals, "Invalid session policy")
 		} else {
-			policy = "strict"
+			defer ss.Finish() // nolint:errcheck
+			c.Check(res.Status, Equals, "ok")
+			c.Check(res.Message, Equals, fmt.Sprintf("session x:y created (%s)", tc.policy))
 		}
-
-		c.Assert(res.Status, Equals, "ok")
-		c.Assert(res.Message, Equals, fmt.Sprintf("session x:y created (%s)", policy))
 
 		err = svc.Stop()
 		c.Assert(err, IsNil)

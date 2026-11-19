@@ -23,7 +23,9 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -62,6 +64,89 @@ func (t *proxySuite) TestServerError(c *C) {
 	err = errors.New("an error")
 	p.ForceError(err)
 	c.Assert(p.Err(), Equals, err)
+}
+
+func (t *proxySuite) TestPassthrough(c *C) {
+	oldNoProxy, hadNoProxy := os.LookupEnv("NO_PROXY")
+	defer func() {
+		if hadNoProxy {
+			_ = os.Setenv("NO_PROXY", oldNoProxy)
+		} else {
+			_ = os.Unsetenv("NO_PROXY")
+		}
+	}()
+	c.Assert(os.Setenv("NO_PROXY", "127.0.0.1"), IsNil)
+	cfg := config.GetHTTPProxyConfig()
+	defer config.SetHTTPProxyConfig(cfg)
+	config.SetHTTPProxyConfig(config.HTTPProxyConfig{Policy: config.Allow})
+
+	ch := make(chan interface{})
+	defer close(ch)
+	go func() {
+		for msg := range ch {
+			switch m := msg.(type) {
+			case messages.ProxyAuth:
+				m.Rch <- session.CheckAuth(m.ID, m.Pw, m.HostIP, m.ClientIP, m.Agent)
+			case messages.RequestInspection:
+				c.Error("passthrough unexpectedly requested request inspection")
+				m.Rch <- errors.New("unexpected request inspection")
+			case messages.ResponseInspection:
+				c.Error("passthrough unexpectedly requested artifact inspection")
+				m.Rch <- errors.New("unexpected artifact inspection")
+			}
+		}
+	}()
+
+	spool := c.MkDir()
+	p, err := proxy.NewHTTPProxy(0, spool, testutils.ProxyCert, testutils.ProxyKey, ch)
+	c.Assert(err, IsNil)
+	px := httptest.NewServer(p.Handler())
+	defer px.Close()
+
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c.Check(r.Method, Equals, "POST")
+		c.Check(r.Header.Get("X-Fetch-Session-Id"), Equals, "")
+		c.Check(r.Header.Get("Proxy-Authorization"), Equals, "")
+		c.Check(r.URL.Query().Get("token"), Equals, "private-query")
+		body, err := io.ReadAll(r.Body)
+		c.Check(err, IsNil)
+		c.Check(string(body), Equals, "request body")
+		w.Header().Set("X-Origin", "unchanged")
+		_, _ = io.WriteString(w, "uninspected response")
+	}))
+	defer origin.Close()
+
+	s := session.NewWithPolicy(spool, 0, session.PolicyPassthrough, nil, config.OverrideInspectorsConfig{})
+	defer s.Discard()
+	proxyURL, err := url.Parse(px.URL)
+	c.Assert(err, IsNil)
+	proxyURL.User = url.UserPassword(s.ID, s.Token)
+	tr := &http.Transport{Proxy: http.ProxyURL(proxyURL)}
+	defer tr.CloseIdleConnections()
+	client := &http.Client{Transport: tr, Timeout: 5 * time.Second}
+	resp, err := client.Post(origin.URL+"/artifact?token=private-query", "text/plain", strings.NewReader("request body"))
+	c.Assert(err, IsNil)
+	defer resp.Body.Close()
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	c.Check(resp.Header.Get("X-Origin"), Equals, "unchanged")
+	body, err := io.ReadAll(resp.Body)
+	c.Assert(err, IsNil)
+	c.Check(string(body), Equals, "uninspected response")
+	c.Check(s.Artifacts(), HasLen, 0)
+	c.Check(testlogger.Contains(fmt.Sprintf(`passthrough request session=%q client="127.0.0.1" method="POST" url=%q`, s.ID, origin.URL+"/artifact")), Equals, true)
+	c.Check(testlogger.Contains("private-query"), Equals, false)
+
+	config.SetHTTPProxyConfig(config.HTTPProxyConfig{Policy: config.Deny})
+	denied, err := client.Post(origin.URL+"/artifact?token=private-query", "text/plain", strings.NewReader("request body"))
+	c.Assert(err, IsNil)
+	denied.Body.Close()
+	c.Check(denied.StatusCode, Equals, http.StatusForbidden)
+
+	c.Assert(s.Revoke(s.Token), Equals, true)
+	revoked, err := client.Get(origin.URL + "/artifact")
+	c.Assert(err, IsNil)
+	revoked.Body.Close()
+	c.Check(revoked.StatusCode, Equals, http.StatusProxyAuthRequired)
 }
 
 // Test file transfer using the proxy.
@@ -231,12 +316,12 @@ var proxyFromEnvironmentTests = []proxyFromEnvironmentTest{{
 	env:   map[string]string{"http_proxy": "http://localhost:1234", "https_proxy": "http://otherhost:5678"},
 	proxy: "http://otherhost:5678",
 }, {
-    // http_proxy overrides all_proxy
+	// http_proxy overrides all_proxy
 	url:   "http://example.com",
 	env:   map[string]string{"http_proxy": "http://localhost:1234", "all_proxy": "http://otherhost:5678"},
 	proxy: "http://localhost:1234",
 }, {
-    // https_proxy overrides all_proxy
+	// https_proxy overrides all_proxy
 	url:   "https://example.com",
 	env:   map[string]string{"https_proxy": "http://localhost:1234", "ALL_PROXY": "http://otherhost:5678"},
 	proxy: "http://localhost:1234",
