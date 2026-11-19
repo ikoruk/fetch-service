@@ -26,6 +26,7 @@ import (
 
 	"github.com/canonical/fetch-service/service/fetchctl"
 	"github.com/canonical/fetch-service/service/messages"
+	"github.com/canonical/fetch-service/session"
 )
 
 var createSessionCmd CreateSessionCmd
@@ -38,16 +39,21 @@ func init() {
 }
 
 type CreateSessionCmd struct {
-	SessionID  string `long:"session-id" description:"Session ID of the newly created session"`
-	Token      string `long:"token" description:"Session token of the newly created session"`
-	Timeout    int    `long:"timeout" description:"Session timeout in seconds"`
-	Permissive bool   `long:"permissive" description:"Create a permissive session"`
-	Args       struct {
+	SessionID   string `long:"session-id" description:"Session ID of the newly created session"`
+	Token       string `long:"token" description:"Session token of the newly created session"`
+	Timeout     int    `long:"timeout" description:"Session timeout in seconds"`
+	Permissive  bool   `long:"permissive" description:"Create a permissive session"`
+	Passthrough bool   `long:"passthrough" description:"Create an audit-only session without inspection"`
+	Args        struct {
 		Filename string `positional-arg-name:"filename"`
 	} `positional-args:"yes"`
 }
 
 func (cmd *CreateSessionCmd) Execute(args []string) error {
+	if cmd.Permissive && cmd.Passthrough {
+		return fmt.Errorf("--permissive and --passthrough cannot be combined")
+	}
+
 	socket := fetchctlSocketPath()
 
 	if err := checkSocket(socket); err != nil {
@@ -70,11 +76,11 @@ func (cmd *CreateSessionCmd) Execute(args []string) error {
 	}
 	defer conn.Close()
 
-	var mode string
+	mode := session.PolicyStrict
 	if cmd.Permissive {
-		mode = "permissive"
-	} else {
-		mode = "strict"
+		mode = session.PolicyPermissive
+	} else if cmd.Passthrough {
+		mode = session.PolicyPassthrough
 	}
 
 	createPayload := messages.CreateSessionPayload{

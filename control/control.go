@@ -41,7 +41,7 @@ import (
 // Parameters for session creation
 type createSessionParameters struct {
 	Timeout          uint64                          `json:"timeout"`                  // Session timeout in seconds
-	Policy           string                          `json:"policy"`                   // Session policy ("strict" or "permissive")
+	Policy           string                          `json:"policy"`                   // Session policy ("strict", "permissive", or "passthrough")
 	Secrets          []secrets.Secret                `json:"secrets"`                  // Session secrets
 	InspectorsConfig config.OverrideInspectorsConfig `json:"inspectors-configuration"` // Session inspectors configuration
 }

@@ -96,6 +96,7 @@ func (t *controlSuite) TestCreateSession(c *C) {
 		resCode int    // expected result code
 	}{
 		{`{"policy": "permissive"}`, "", 200},
+		{`{"policy": "passthrough"}`, "", 200},
 		{`{"policy": "permissive", "secrets": [{"type":"basic-auth", "url": "http://example.com"}]}`, "", 200},
 		{`{"policy": "permissive"}`, "oops", 400}, // session creation error
 		{"not json", "", 400}, // bad parameters

@@ -79,7 +79,7 @@ type SessionMetadata struct {
 type SessionInfo struct {
 	SessionID string `json:"session-id"` // session ID
 	StartTime string `json:"start-time"` // session start timestamp
-	Policy    string `json:"policy"`     // session policy ("strict" or "permissive")
+	Policy    string `json:"policy"`     // session policy ("strict", "permissive", or "passthrough")
 	Age       uint64 `json:"age"`        // session age in seconds
 	Timeout   uint64 `json:"timeout"`    // session timeout in seconds
 }

@@ -121,7 +121,18 @@ func fetchCtlCreateSession(v messages.FetchCtl, svc *Service) messages.FetchCtlR
 		return messages.FetchCtlResult{Status: "error", Message: fmt.Sprintf("malformed payload: %s", err)}
 	}
 
-	permissive := svc.opt.PermissiveMode && params.Mode == "permissive"
+	policy := session.PolicyStrict
+	switch params.Mode {
+	case session.PolicyPermissive:
+		if svc.opt.PermissiveMode {
+			policy = session.PolicyPermissive
+		}
+	case session.PolicyPassthrough:
+		if !svc.opt.PassthroughMode {
+			return messages.FetchCtlResult{Status: "error", Message: session.ErrInvalidSessionPolicy.Error()}
+		}
+		policy = session.PolicyPassthrough
+	}
 	timeout := time.Duration(params.Timeout) * time.Second
 
 	cfg := config.OverrideInspectorsConfig{}
@@ -132,7 +143,7 @@ func fetchCtlCreateSession(v messages.FetchCtl, svc *Service) messages.FetchCtlR
 		}
 	}
 
-	s := sessionNewWithID(params.SessionID, params.Token, svc.opt.Spool, timeout, permissive, nil, cfg)
+	s := sessionNewWithID(params.SessionID, params.Token, svc.opt.Spool, timeout, policy, nil, cfg)
 
 	logger.Infof("service: session %s created", s.ID)
 	svc.totalSessions++

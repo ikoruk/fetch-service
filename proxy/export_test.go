@@ -19,6 +19,8 @@
 
 package proxy
 
+import "net/http"
+
 var (
 	CopyHTTPHeader       = copyHTTPHeader
 	SplitCertKey         = splitCertKey
@@ -30,4 +32,8 @@ var (
 
 func (p *HTTPProxy) ForceError(err error) {
 	p.tomb.Kill(err)
+}
+
+func (p *HTTPProxy) Handler() http.Handler {
+	return p.proxy
 }
